@@ -45,14 +45,12 @@
 
   <h2>🌾 Farmer Dashboard</h2>
 
-  <!-- LOGIN + REGISTER CARD -->
   <div class="card" id="authCard">
     <div class="tabs">
       <button class="tab-btn active" id="loginTab" onclick="showLogin()">Login</button>
       <button class="tab-btn" id="registerTab" onclick="showRegister()">Register</button>
     </div>
 
-    <!-- LOGIN FORM -->
     <div id="loginForm">
       <h3>Login</h3>
       <input id="loginFarmerId" placeholder="Farmer ID (eg FARMER09)" />
@@ -61,21 +59,26 @@
       <p class="muted" id="loginMsg"></p>
     </div>
 
-    <!-- REGISTER FORM -->
     <div id="registerForm" style="display:none;">
       <h3>Register</h3>
+
       <input id="regFarmerId" placeholder="Farmer ID (eg FARMER09)" />
       <input id="regName" placeholder="Full Name" />
       <input id="regPhone" placeholder="Phone" />
       <input id="regEmail" placeholder="Email" />
       <input id="regZone" placeholder="Zone (eg ZONE1)" />
       <input id="regPassword" type="password" placeholder="Password" />
+
+      <input id="regLandSize" type="number" step="0.01" placeholder="Land Size (acres/hectares)" />
+      <input id="regCropType" placeholder="Crop Type (eg Rice / Wheat)" />
+      <input id="regPH" type="number" step="0.1" placeholder="Soil pH (eg 6.5)" />
+      <input id="regSoilType" placeholder="Soil Type (eg Sandy / Clay / Loam)" />
+
       <button onclick="registerFarmer()">Register</button>
       <p class="muted" id="regMsg"></p>
     </div>
   </div>
 
-  <!-- PROFILE -->
   <div class="card" id="profileCard" style="display:none;">
     <h3>My Profile</h3>
     <p><b>ID:</b> <span id="p-id"></span></p>
@@ -83,15 +86,29 @@
     <p><b>Phone:</b> <span id="p-phone"></span></p>
     <p><b>Email:</b> <span id="p-email"></span></p>
     <p><b>Zone:</b> <span id="p-zone"></span></p>
+
+    <p><b>Land Size:</b> <span id="p-land"></span></p>
+    <p><b>Crop Type:</b> <span id="p-crop"></span></p>
+    <p><b>Soil pH:</b> <span id="p-ph"></span></p>
+    <p><b>Soil Type:</b> <span id="p-soil"></span></p>
   </div>
 
-  <!-- ALLOCATIONS -->
   <div class="card" id="allocCard" style="display:none;">
     <h3>My Approved Allocations</h3>
+
+    <!-- Additional Allocation Request UI -->
+    <div style="margin-bottom:10px;">
+      <input id="addAllocId" placeholder="Approved Allocation ID (copy from table)" />
+      <input id="addVolume" type="number" placeholder="Requested extra volume (litres)" />
+      <button onclick="requestAdditional()">Request Additional Allocation</button>
+      <p class="muted" id="addMsg"></p>
+    </div>
+
     <table>
       <thead>
         <tr>
-          <th>ID</th><th>Zone</th><th>Fertility</th><th>Volume</th>
+          <th>ID</th><th>Zone</th><th>Fertility</th>
+          <th>Base Volume</th><th>Additional Approved</th><th>Total Volume</th>
           <th>Decision Time</th><th>TxHash</th>
         </tr>
       </thead>
@@ -104,9 +121,6 @@
   const API_BASE = "http://localhost:3000";
   let token = null;
 
-  // -----------------------------
-  // Tabs
-  // -----------------------------
   function showLogin(){
     document.getElementById("loginForm").style.display="block";
     document.getElementById("registerForm").style.display="none";
@@ -121,9 +135,6 @@
     document.getElementById("loginTab").classList.remove("active");
   }
 
-  // -----------------------------
-  // Register
-  // -----------------------------
   async function registerFarmer(){
     const farmerId = document.getElementById("regFarmerId").value.trim();
     const name = document.getElementById("regName").value.trim();
@@ -132,28 +143,49 @@
     const zone = document.getElementById("regZone").value.trim();
     const password = document.getElementById("regPassword").value.trim();
 
+    const land_size = parseFloat(document.getElementById("regLandSize").value);
+    const crop_type = document.getElementById("regCropType").value.trim();
+    const ph = parseFloat(document.getElementById("regPH").value);
+    const soil_type = document.getElementById("regSoilType").value.trim();
+
+    if(!farmerId || !phone || !password){
+      document.getElementById("regMsg").textContent =
+        "farmerId, phone, password are mandatory.";
+      return;
+    }
+    if(isNaN(land_size) || land_size <= 0){
+      document.getElementById("regMsg").textContent =
+        "Enter valid land size.";
+      return;
+    }
+    if(!crop_type || !soil_type || isNaN(ph)){
+      document.getElementById("regMsg").textContent =
+        "crop type, soil type, and pH are required.";
+      return;
+    }
+
     const res = await fetch(`${API_BASE}/api/farmer/register`, {
       method:"POST",
       headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ farmerId, name, phone, email, password, zone })
+      body: JSON.stringify({
+        farmerId, name, phone, email, password, zone,
+        land_size, crop_type, ph, soil_type
+      })
     });
 
     const data = await res.json();
     if(!res.ok){
-      document.getElementById("regMsg").textContent = data.error || "Register failed";
+      document.getElementById("regMsg").textContent =
+        data.error || "Register failed";
       return;
     }
 
     document.getElementById("regMsg").textContent =
       "✅ Registered successfully. Please login now.";
 
-    // Auto switch to login tab after register
     showLogin();
   }
 
-  // -----------------------------
-  // Login
-  // -----------------------------
   async function login(){
     const farmerId = document.getElementById("loginFarmerId").value.trim();
     const password = document.getElementById("loginPassword").value.trim();
@@ -166,7 +198,8 @@
 
     const data = await res.json();
     if(!res.ok){
-      document.getElementById("loginMsg").textContent = data.error || "Login failed";
+      document.getElementById("loginMsg").textContent =
+        data.error || "Login failed";
       return;
     }
 
@@ -192,6 +225,11 @@
     document.getElementById("p-phone").textContent = p.phone;
     document.getElementById("p-email").textContent = p.email;
     document.getElementById("p-zone").textContent = p.zone;
+
+    document.getElementById("p-land").textContent = p.land_size ?? "—";
+    document.getElementById("p-crop").textContent = p.crop_type ?? "—";
+    document.getElementById("p-ph").textContent = p.ph ?? "—";
+    document.getElementById("p-soil").textContent = p.soil_type ?? "—";
   }
 
   async function loadAllocations(){
@@ -204,25 +242,63 @@
     tbody.innerHTML = "";
 
     if(list.length === 0){
-      document.getElementById("allocMsg").textContent = "No approved allocations yet.";
+      document.getElementById("allocMsg").textContent =
+        "No approved allocations yet.";
       return;
     }
 
     document.getElementById("allocMsg").textContent = "";
 
     list.forEach(a=>{
+      const baseVol = a.allocatedVolume ?? 0;
+      const extraVol = a.additionalApprovedVolume ?? 0;
+      const totalVol = a.totalAllocatedVolume ?? baseVol;
+
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>${a.allocationId}</td>
         <td>${a.zone}</td>
         <td>${a.fertility_score?.toFixed?.(2) ?? "—"}</td>
-        <td>${a.allocatedVolume}</td>
+        <td>${baseVol}</td>
+        <td>${extraVol}</td>
+        <td>${totalVol}</td>
         <td>${new Date(a.decisionTimestamp).toLocaleString()}</td>
         <td class="muted">${a.txHash ?? "—"}</td>
       `;
       tbody.appendChild(tr);
     });
   }
+
+  async function requestAdditional() {
+    const allocationId = document.getElementById("addAllocId").value.trim();
+    const requestedVolume = parseFloat(document.getElementById("addVolume").value);
+
+    if (!allocationId || isNaN(requestedVolume) || requestedVolume <= 0) {
+      document.getElementById("addMsg").textContent =
+        "Enter valid allocationId and volume.";
+      return;
+    }
+
+    const res = await fetch(`${API_BASE}/api/farmer/requestAdditional/${allocationId}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({ requestedVolume })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      document.getElementById("addMsg").textContent =
+        data.error || "Request failed";
+      return;
+    }
+
+    document.getElementById("addMsg").textContent =
+      "✅ Additional request submitted. Wait for admin approval.";
+  }
+
 </script>
 </body>
 </html>

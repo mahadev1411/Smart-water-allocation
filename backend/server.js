@@ -4,32 +4,28 @@ const mqtt = require("mqtt");
 const { ethers } = require("ethers");
 const cors = require("cors");
 
+const client = require("./cassandra");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+
+const JWT_SECRET = "water_secret_key";
+
 // -----------------------------
 // Ethereum / Hardhat setup
 // -----------------------------
 const RPC_URL = "http://127.0.0.1:8545";
 const CONTRACT_ADDRESS = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
 
-// paste authority private key from hardhat node terminal
 const AUTHORITY_PRIVATE_KEY =
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-  const client = require("./cassandra");
-const bcrypt = require("bcrypt");
-const jwt = require("jsonwebtoken");
-
-const JWT_SECRET = "water_secret_key"; // later put in .env
-
-
-const app = express();
-app.use(cors());
-const port = 3000;
-app.use(express.json());
-
 const CONTRACT_ABI = [
   "function createWaterAllocation(string id, string farmerID, uint256 allocatedVolume, uint256 timestamp)",
-  "function queryAllocation(string id) view returns (string,string,uint256,uint256,uint256,address)",
+  "function addAdditionalAllocation(string baseId, uint256 additionalVolume, uint256 timestamp)",
+  "function queryAllocation(string id) view returns (string,string,uint256,uint256,uint256,uint256,address)",
+  "function getTotalAllocatedVolume(string id) view returns (uint256)"
 ];
+
 
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const authoritySigner = new ethers.Wallet(AUTHORITY_PRIVATE_KEY, provider);
@@ -40,48 +36,81 @@ const waterContract = new ethers.Contract(
 );
 
 // -----------------------------
+// Express Setup
+// -----------------------------
+const app = express();
+app.use(cors());
+const port = 3000;
+app.use(express.json());
+
+// -----------------------------
 // MQTT Setup
 // -----------------------------
 const brokerUrl = "mqtt://broker.emqx.io:1883";
-const SENSOR_TOPIC = "water/sensor/data";
-const ALLOC_TOPIC = "water/allocation/commands";
+const SENSOR_TOPIC_WILDCARD = "farmer/+/sensor/data";   // ✅ new path
 const mqttClient = mqtt.connect(brokerUrl);
+
+// ✅ Replace these with the exact encoding used in training (only for soil numeric)
+const CROP_TYPE_MAP = {
+  rice: "rice",
+  wheat: "wheat",
+  maize: "maize",
+  sugarcane: "sugarcane",
+};
+
+const SOIL_TYPE_MAP = {
+  clay: 1,
+  loam: 2,
+  sandy: 3,
+  silt: 4,
+};
 
 // -----------------------------
 // Live Sensor + ML storage
 // -----------------------------
-const liveSensors = [];      // last 5 sensor packets
-let lastMLDecision = null;   // latest ML decision output
+const liveSensors = [];
+let lastMLDecision = null;
 
 // -----------------------------
 // Allocation storage
 // -----------------------------
 const pendingAllocations = new Map();
 const approvedAllocations = new Map();
+// Additional allocation requests
+const pendingAdditionalAllocations = new Map();   // key: addReqId
+
 
 // -----------------------------
-// ML model call
+// Helper: fetch farmer fixed params from Cassandra
 // -----------------------------
-async function runMLAllocation(sensorJson) {
-  const resp = await axios.post("http://127.0.0.1:5000/predict", sensorJson);
-  const { fertility_score, allocatedVolume } = resp.data;
+async function getFarmerParams(farmerId) {
+  try {
+    const result = await client.execute(
+      `SELECT land_size, crop_type, ph, soil_type, zone, name
+       FROM farmers WHERE farmer_id=?`,
+      [farmerId],
+      { prepare: true }
+    );
 
-  console.log(
-    "🧠 Fertility score:",
-    fertility_score,
-    "→ AllocatedVolume:",
-    allocatedVolume
-  );
+    if (result.rowLength === 0) return null;
+    return result.first();
+  } catch (e) {
+    console.error("Farmer fetch error:", e.message);
+    return null;
+  }
+}
 
-  return {
-    farmerId: sensorJson.farmerId || "FARMER_UNKNOWN",
-    zone: sensorJson.location,
-    fertility_score,
-    allocatedVolume,
-    period: "DAY",
-    validForMinutes: 60,
-    decisionTimestamp: Date.now(),
-  };
+// -----------------------------
+// ML Calls
+// -----------------------------
+async function runFertilityModel(features) {
+  const resp = await axios.post("http://127.0.0.1:5000/predict", features);
+  return resp.data; // { fertility_score, allocatedVolume? }
+}
+
+async function runAllocationIndexModel(features) {
+  const resp = await axios.post("http://127.0.0.1:5001/predict", features);
+  return resp.data; // { allocation_index }
 }
 
 // -----------------------------
@@ -89,9 +118,9 @@ async function runMLAllocation(sensorJson) {
 // -----------------------------
 mqttClient.on("connect", () => {
   console.log("✅ MQTT connected");
-  mqttClient.subscribe(SENSOR_TOPIC, (err) => {
+  mqttClient.subscribe(SENSOR_TOPIC_WILDCARD, (err) => {
     if (err) console.error("Subscribe error:", err);
-    else console.log("📥 Subscribed to", SENSOR_TOPIC);
+    else console.log("📥 Subscribed to", SENSOR_TOPIC_WILDCARD);
   });
 });
 
@@ -99,36 +128,97 @@ mqttClient.on("connect", () => {
 // MQTT message handler
 // -----------------------------
 mqttClient.on("message", async (topic, message) => {
-  if (topic !== SENSOR_TOPIC) return;
+  // Expect: farmer/<farmerId>/sensors/data
+  const parts = topic.split("/");
+  if (parts.length !== 4 || parts[0] !== "farmer" || parts[2] !== "sensor") {
+    return; // ignore other topics
+  }
+
+  const farmerIdFromTopic = parts[1];
 
   try {
     const sensorData = JSON.parse(message.toString());
-    console.log("📡 Sensor data received:", sensorData);
+    console.log("📡 Sensor data received:", farmerIdFromTopic, sensorData);
 
-    // store last 5 packets for UI
+    const farmerId = farmerIdFromTopic || sensorData.farmerId;
+    if (!farmerId) {
+      console.warn("⚠️ Missing farmerId. Skipping packet.");
+      return;
+    }
+
+    // ✅ Fetch farmer fixed params (from registration)
+    const farmerParams = await getFarmerParams(farmerId);
+
+    // ✅ If farmer not registered → ignore packet safely
+    if (!farmerParams) {
+      console.warn(`⚠️ Farmer ${farmerId} not found in DB. Ignoring this sensor packet.`);
+      return;
+    }
+
+    // ✅ zone from DB
+    const zoneFromDB = farmerParams.zone || "ZONE_UNKNOWN";
+
+    const cropTypeRaw = (farmerParams.crop_type || "").toLowerCase();
+    const soilTypeRaw = (farmerParams.soil_type || "").toLowerCase();
+
+    const label_for_model2 = CROP_TYPE_MAP[cropTypeRaw] ?? "UNKNOWN"; // ✅ string label
+    const soil_type_code = SOIL_TYPE_MAP[soilTypeRaw] ?? 0;          // ✅ numeric soil
+
+    // ✅ Store last 5 sensor packets (for UI)
     liveSensors.unshift({
-      zone: sensorData.location,
-      farmerId: sensorData.farmerId,
-      temperature: sensorData.temperature,
-      humidity: sensorData.humidity,
-      ph: sensorData.ph,
-      rainfall: sensorData.rainfall,
-      flowRate: sensorData.flowRate ?? null,
+      zone: zoneFromDB,
+      farmerId,
+      temperature: sensorData.temperature ?? 0,
+      humidity: sensorData.humidity ?? 0,
+      soil_moisture: sensorData.soil_moisture ?? 0,
+      sunlight: sensorData.sunlight ?? 0,
       receivedAt: Date.now(),
     });
     if (liveSensors.length > 5) liveSensors.pop();
 
-    // ML decision
-    const allocation = await runMLAllocation(sensorData);
+    // ---- payload only for fertility model (Model 1)
+    const fertilityPayload = {
+      temperature: sensorData.temperature ?? 0,
+      humidity: sensorData.humidity ?? 0,
+      ph: farmerParams.ph ?? 0,
+      rainfall: 20,           // hardcoded for now
+      soil_moisture: sensorData.soil_moisture ?? 0,
+      fertilizer_usage: 3,    // hardcoded for now
+    };
 
-    // store latest ML decision for UI
+    // ---- payload only for allocation index model (Model 2)
+    const allocationPayload = {
+      humidity: sensorData.humidity ?? 0,
+      soil_moisture: sensorData.soil_moisture ?? 0,
+      temperature: sensorData.temperature ?? 0,
+      sunlight_exposure: sensorData.sunlight ?? 0,  // ✅ correct name
+      land_area: farmerParams.land_size ?? 0,       // ✅ correct name
+      label: label_for_model2,                      // ✅ crop string
+      ph: farmerParams.ph ?? 0,
+      soil_type: soil_type_code,                    // ✅ numeric
+    };
+
+    // ✅ Call models separately
+    const fertOut = await runFertilityModel(fertilityPayload);
+    const fertility_score = fertOut.fertility_score ?? 0;
+
+    const idxOut = await runAllocationIndexModel(allocationPayload);
+    const allocation_index = idxOut.allocation_index ?? 0;
+
+    // ✅ Final allocated volume
+    const finalAllocatedVolume =
+      (farmerParams.land_size ?? 0) * allocation_index;
+
+    // Save latest ML decision for Admin UI
     lastMLDecision = {
-      zone: allocation.zone,
-      farmerId: allocation.farmerId,
-      fertility_score: allocation.fertility_score,
-      allocatedVolume: allocation.allocatedVolume,
-      period: allocation.period,
-      decisionTimestamp: allocation.decisionTimestamp,
+      zone: zoneFromDB,
+      farmerId,
+      fertility_score,
+      allocation_index,
+      land_size: farmerParams.land_size ?? 0,
+      allocatedVolume: finalAllocatedVolume,
+      period: "DAY",
+      decisionTimestamp: Date.now(),
     };
 
     // create allocation record
@@ -136,22 +226,35 @@ mqttClient.on("message", async (topic, message) => {
 
     const pendingRecord = {
       allocationId,
-      farmerId: allocation.farmerId,
-      zone: allocation.zone,
-      fertility_score: allocation.fertility_score,
-      allocatedVolume: allocation.allocatedVolume,
-      period: allocation.period,
-      decisionTimestamp: allocation.decisionTimestamp,
+      farmerId,
+      zone: zoneFromDB,
+      fertility_score,
+      allocation_index,
+      land_size: farmerParams.land_size ?? 0,
+      allocatedVolume: finalAllocatedVolume,
+      period: "DAY",
+      decisionTimestamp: Date.now(),
       status: "PENDING",
     };
 
     pendingAllocations.set(allocationId, pendingRecord);
-
     console.log("🕒 Pending allocation created:", pendingRecord);
 
-    // publish allocation decision back to IoT controller
-    mqttClient.publish(ALLOC_TOPIC, JSON.stringify(allocation));
-    console.log("📤 Published allocation to", ALLOC_TOPIC);
+    // ✅ publish to farmer/<id>/allocation
+    const allocTopic = `farmer/${farmerId}/allocation`;
+    mqttClient.publish(
+      allocTopic,
+      JSON.stringify({
+        farmerId,
+        zone: zoneFromDB,
+        fertility_score,
+        allocation_index,
+        allocatedVolume: finalAllocatedVolume,
+        period: "DAY",
+      })
+    );
+
+    console.log("📤 Published allocation to", allocTopic);
 
   } catch (e) {
     console.error("Invalid sensor JSON:", e.message);
@@ -161,23 +264,18 @@ mqttClient.on("message", async (topic, message) => {
 // -----------------------------
 // REST APIs
 // -----------------------------
-
-// Live sensors for UI
 app.get("/api/sensors/live", (req, res) => {
   res.json(liveSensors);
 });
 
-// Latest ML decision for UI
 app.get("/api/ml/decision", (req, res) => {
   res.json(lastMLDecision || {});
 });
 
-// pending list
 app.get("/api/admin/pendingAllocations", (req, res) => {
   res.json(Array.from(pendingAllocations.values()));
 });
 
-// approve + push to chain
 app.post("/api/admin/approveAllocation/:allocationId", async (req, res) => {
   try {
     const { allocationId } = req.params;
@@ -194,15 +292,12 @@ app.post("/api/admin/approveAllocation/:allocationId", async (req, res) => {
     const tx = await waterContract.createWaterAllocation(
       pending.allocationId,
       pending.farmerId,
-      pending.allocatedVolume,
+      Math.floor(pending.allocatedVolume),
       Math.floor(pending.decisionTimestamp / 1000)
     );
 
     const receipt = await tx.wait();
     pending.txHash = receipt.hash;
-
-    console.log("⛓️ Stored on Ethereum:", pending);
-    console.log("Tx:", receipt.hash);
 
     approvedAllocations.set(allocationId, pending);
     pendingAllocations.delete(allocationId);
@@ -212,13 +307,13 @@ app.post("/api/admin/approveAllocation/:allocationId", async (req, res) => {
       allocationId,
       txHash: receipt.hash,
     });
+
   } catch (e) {
     console.error("Approve error:", e.message);
     res.status(500).json({ error: e.message });
   }
 });
 
-// reject
 app.post("/api/admin/rejectAllocation/:allocationId", (req, res) => {
   const { allocationId } = req.params;
   const pending = pendingAllocations.get(allocationId);
@@ -232,103 +327,45 @@ app.post("/api/admin/rejectAllocation/:allocationId", (req, res) => {
   pending.rejectedAt = Date.now();
 
   pendingAllocations.set(allocationId, pending);
-
-  console.log("❌ Allocation rejected:", pending);
-
   res.json({ status: "REJECTED", allocationId });
 });
 
-// approved list
 app.get("/api/allocations", (req, res) => {
   res.json(Array.from(approvedAllocations.values()));
 });
 
-// ✅ Farmer-specific allocations (pending + approved)
-app.get("/api/farmer/:farmerId/allocations", (req, res) => {
-  const farmerId = req.params.farmerId;
-
-  const pending = Array.from(pendingAllocations.values())
-    .filter(a => a.farmerId === farmerId);
-
-  const approved = Array.from(approvedAllocations.values())
-    .filter(a => a.farmerId === farmerId);
-
-  res.json({ pending, approved });
-});
-
-
-// blockchain query (+ include txHash if known)
-app.get("/api/query/:id", async (req, res) => {
-  try {
-    const allocationId = req.params.id;
-    console.log(`🔍 Query request for ID: ${allocationId}`);
-
-    const allocation = await waterContract.queryAllocation(allocationId);
-
-    const localApproved = approvedAllocations.get(allocationId);
-
-    const response = {
-      ID: allocation[0],
-      farmerID: allocation[1],
-      allocatedVolume: allocation[2].toString(),
-      usedVolume: allocation[3].toString(),
-      timestamp: allocation[4].toString(),
-      issuingAuthority: allocation[5],
-      txHash: localApproved?.txHash || null
-    };
-
-    res.json(response);
-  } catch (error) {
-    console.error("Query error:", error.message);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Proof panel endpoint
+// Optional proof endpoint (for admin UI)
 app.get("/api/proof", async (req, res) => {
   try {
-    const currentBlockNumber = await provider.getBlockNumber();
+    const currentBlock = await provider.getBlockNumber();
     const recentTxHashes = Array.from(approvedAllocations.values())
       .slice(-5)
-      .map((x) => x.txHash)
-      .filter(Boolean)
-      .reverse();
+      .map(a => a.txHash)
+      .filter(Boolean);
 
     res.json({
       contractAddress: CONTRACT_ADDRESS,
-      currentBlockNumber,
-      recentTxHashes,
+      currentBlockNumber: currentBlock,
+      recentTxHashes
     });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.json({
+      contractAddress: CONTRACT_ADDRESS,
+      currentBlockNumber: 0,
+      recentTxHashes: []
+    });
   }
 });
 
-// ✅ Get all blocks (simple demo)
-app.get("/api/blocks", async (req, res) => {
-  try {
-    const currentBlockNumber = await provider.getBlockNumber();
-    const blocks = [];
-
-    for (let i = 0; i <= currentBlockNumber; i++) {
-      const b = await provider.getBlock(i);
-      blocks.push({
-        number: b.number,
-        hash: b.hash,
-        timestamp: b.timestamp,
-        txCount: b.transactions.length
-      });
-    }
-
-    res.json({ currentBlockNumber, blocks });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
+// -----------------------------
+// Farmer Auth + Cassandra routes
+// -----------------------------
 app.post("/api/farmer/register", async (req, res) => {
   try {
-    const { farmerId, name, phone, email, password, zone } = req.body;
+    const {
+      farmerId, name, phone, email, password, zone,
+      land_size, crop_type, ph, soil_type
+    } = req.body;
 
     if (!farmerId || !phone || !password) {
       return res.status(400).json({ error: "farmerId, phone, password required" });
@@ -336,15 +373,20 @@ app.post("/api/farmer/register", async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // insert main record
     await client.execute(
-      `INSERT INTO farmers (farmer_id, name, phone, email, password_hash, zone, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, toTimestamp(now()))`,
-      [farmerId, name, phone, email, passwordHash, zone],
+      `INSERT INTO farmers (
+        farmer_id, name, phone, email, password_hash, zone,
+        land_size, crop_type, ph, soil_type,
+        created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, toTimestamp(now()))`,
+      [
+        farmerId, name, phone, email, passwordHash, zone,
+        land_size ?? 0, crop_type ?? "UNKNOWN", ph ?? 0, soil_type ?? "UNKNOWN"
+      ],
       { prepare: true }
     );
 
-    // insert lookup record
     await client.execute(
       `INSERT INTO farmers_by_phone (phone, farmer_id, name, zone)
        VALUES (?, ?, ?, ?)`,
@@ -353,6 +395,7 @@ app.post("/api/farmer/register", async (req, res) => {
     );
 
     res.json({ status: "REGISTERED", farmerId });
+
   } catch (e) {
     console.error("Register error:", e.message);
     res.status(500).json({ error: e.message });
@@ -413,7 +456,7 @@ app.get("/api/farmer/me", authFarmer, async (req, res) => {
     const farmerId = req.farmerId;
 
     const result = await client.execute(
-      `SELECT farmer_id, name, phone, email, zone, created_at 
+      `SELECT farmer_id, name, phone, email, zone, land_size, crop_type, ph, soil_type, created_at
        FROM farmers WHERE farmer_id=?`,
       [farmerId],
       { prepare: true }
@@ -429,7 +472,6 @@ app.get("/api/farmer/me", authFarmer, async (req, res) => {
   }
 });
 
-
 app.get("/api/farmer/allocations", authFarmer, (req, res) => {
   const farmerId = req.farmerId;
 
@@ -438,6 +480,139 @@ app.get("/api/farmer/allocations", authFarmer, (req, res) => {
 
   res.json(allocations);
 });
+
+// Farmer requests additional water for an already-approved allocation
+app.post("/api/farmer/requestAdditional/:allocationId", authFarmer, (req, res) => {
+  const farmerId = req.farmerId;
+  const { allocationId } = req.params;
+  const { requestedVolume } = req.body;
+
+  if (!requestedVolume || requestedVolume <= 0) {
+    return res.status(400).json({ error: "requestedVolume must be > 0" });
+  }
+
+  const approved = approvedAllocations.get(allocationId);
+  if (!approved) {
+    return res.status(404).json({ error: "Approved allocation not found" });
+  }
+
+  // farmer can only request extra for their own allocation
+  if (approved.farmerId !== farmerId) {
+    return res.status(403).json({ error: "Not allowed" });
+  }
+
+  const addReqId = `ADD_${Date.now()}`;
+
+  const reqRecord = {
+    addReqId,
+    allocationId,
+    farmerId,
+    zone: approved.zone,
+    baseAllocatedVolume: approved.allocatedVolume,
+    requestedVolume,
+    status: "PENDING",
+    requestedAt: Date.now(),
+  };
+
+  pendingAdditionalAllocations.set(addReqId, reqRecord);
+
+  res.json({ status: "ADDITIONAL_REQUESTED", addReqId });
+});
+
+
+app.get("/api/admin/pendingAdditionalAllocations", (req, res) => {
+  res.json(Array.from(pendingAdditionalAllocations.values()));
+});
+
+app.post("/api/admin/approveAdditional/:addReqId", async (req, res) => {
+  try {
+    const { addReqId } = req.params;
+    const pendingAdd = pendingAdditionalAllocations.get(addReqId);
+
+    if (!pendingAdd || pendingAdd.status !== "PENDING") {
+      return res.status(404).json({ error: "Pending additional request not found" });
+    }
+
+    const approved = approvedAllocations.get(pendingAdd.allocationId);
+    if (!approved) {
+      return res.status(404).json({ error: "Base approved allocation not found" });
+    }
+
+    // 1) push additional allocation ON-CHAIN
+    const tx = await waterContract.addAdditionalAllocation(
+      approved.allocationId,
+      Math.floor(pendingAdd.requestedVolume),
+      Math.floor(Date.now() / 1000)
+    );
+    const receipt = await tx.wait();
+    const addTxHash = receipt.hash;
+
+    // 2) update totals for UI
+    const prevExtra = approved.additionalApprovedVolume ?? 0;
+    const newExtra = prevExtra + pendingAdd.requestedVolume;
+
+    approved.additionalApprovedVolume = newExtra;
+    approved.totalAllocatedVolume = approved.allocatedVolume + newExtra;
+    approved.lastAdditionalTxHash = addTxHash; // so admin UI can show it
+
+    // 3) mark request approved
+    pendingAdd.status = "APPROVED";
+    pendingAdd.approvedBy = "admin";
+    pendingAdd.approvedAt = Date.now();
+    pendingAdd.txHash = addTxHash;
+
+    pendingAdditionalAllocations.delete(addReqId);
+
+    // 4) publish updated total to MQTT
+    const allocTopic = `farmer/${approved.farmerId}/allocation`;
+    mqttClient.publish(
+      allocTopic,
+      JSON.stringify({
+        farmerId: approved.farmerId,
+        zone: approved.zone,
+        fertility_score: approved.fertility_score,
+        allocation_index: approved.allocation_index,
+        allocatedVolume: approved.totalAllocatedVolume,
+        period: approved.period,
+        isAdditional: true
+      })
+    );
+
+    res.json({
+      status: "APPROVED",
+      addReqId,
+      allocationId: approved.allocationId,
+      additionalTxHash: addTxHash,
+      totalAllocatedVolume: approved.totalAllocatedVolume
+    });
+
+  } catch (e) {
+    console.error("Approve additional error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
+
+app.post("/api/admin/rejectAdditional/:addReqId", (req, res) => {
+  const { addReqId } = req.params;
+  const pendingAdd = pendingAdditionalAllocations.get(addReqId);
+
+  if (!pendingAdd || pendingAdd.status !== "PENDING") {
+    return res.status(404).json({ error: "Pending additional request not found" });
+  }
+
+  pendingAdd.status = "REJECTED";
+  pendingAdd.rejectedBy = "admin";
+  pendingAdd.rejectedAt = Date.now();
+
+  // keep record if you want history, or delete:
+  pendingAdditionalAllocations.set(addReqId, pendingAdd);
+
+  res.json({ status: "REJECTED", addReqId });
+});
+
+
 
 // health
 app.get("/api/status", (req, res) => {
