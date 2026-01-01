@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Smart Water Allocation System using IoT, Machine Learning, and Blockchain
 
 A decentralized, end-to-end smart irrigation system that uses **IoT sensors**, **machine learning models**, and **Hyperledger Fabric blockchain** to allocate and regulate water usage fairly and transparently for farmers.
@@ -98,3 +99,18 @@ Each **approved allocation** (base or additional) is recorded on-chain with:
 
 
 
+=======
+# Sample Hardhat Project
+
+This project demonstrates a basic Hardhat use case. It comes with a sample contract, a test for that contract, and a Hardhat Ignition module that deploys that contract.
+
+Try running some of the following tasks:
+
+```shell
+npx hardhat help
+npx hardhat test
+REPORT_GAS=true npx hardhat test
+npx hardhat node
+npx hardhat ignition deploy ./ignition/modules/Lock.js
+```
+>>>>>>> 6f7d0bb0 (Integrated hardhat backend + dashboards)

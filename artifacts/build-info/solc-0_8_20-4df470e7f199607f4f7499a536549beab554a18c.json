@@ -1,0 +1,35 @@
+{
+  "_format": "hh3-sol-build-info-1",
+  "id": "solc-0_8_20-4df470e7f199607f4f7499a536549beab554a18c",
+  "solcVersion": "0.8.20",
+  "solcLongVersion": "0.8.20+commit.a1b79de6",
+  "userSourceNameMap": {
+    "contracts/WaterAllocation.sol": "project/contracts/WaterAllocation.sol"
+  },
+  "input": {
+    "language": "Solidity",
+    "settings": {
+      "evmVersion": "shanghai",
+      "outputSelection": {
+        "*": {
+          "": [
+            "ast"
+          ],
+          "*": [
+            "abi",
+            "evm.bytecode",
+            "evm.deployedBytecode",
+            "evm.methodIdentifiers",
+            "metadata"
+          ]
+        }
+      },
+      "remappings": []
+    },
+    "sources": {
+      "project/contracts/WaterAllocation.sol": {
+        "content": "// SPDX-License-Identifier: MIT\r\npragma solidity ^0.8.20;\r\n\r\ncontract WaterAllocation {\r\n    struct Allocation {\r\n        string ID;\r\n        string farmerID;\r\n        uint256 allocatedVolume;   // base approved volume\r\n        uint256 usedVolume;        // tracked usage (demo)\r\n        uint256 timestamp;         // base approval timestamp\r\n        address issuingAuthority;\r\n        bool exists;\r\n    }\r\n\r\n    address public authority; // Water Authority = deployer\r\n\r\n    mapping(string => Allocation) private allocations;\r\n\r\n    // total additional volume approved for a base allocation id\r\n    mapping(string => uint256) private additionalVolumes;\r\n\r\n    event AllocationStored(\r\n        string ID,\r\n        string farmerID,\r\n        uint256 allocatedVolume,\r\n        uint256 usedVolume,\r\n        uint256 timestamp,\r\n        address issuingAuthority\r\n    );\r\n\r\n    event AdditionalAllocationStored(\r\n        string baseId,\r\n        uint256 additionalVolume,\r\n        uint256 newTotalVolume,\r\n        uint256 timestamp,\r\n        address issuingAuthority\r\n    );\r\n\r\n    modifier onlyAuthority() {\r\n        require(msg.sender == authority, \"Only Water Authority can create allocations\");\r\n        _;\r\n    }\r\n\r\n    constructor() {\r\n        authority = msg.sender;\r\n    }\r\n\r\n    // Base allocation approval (same as before)\r\n    function createWaterAllocation(\r\n        string calldata id,\r\n        string calldata farmerID,\r\n        uint256 allocatedVolume,\r\n        uint256 timestamp\r\n    ) external onlyAuthority {\r\n        require(!allocations[id].exists, \"Allocation already exists\");\r\n        require(allocatedVolume > 0, \"Allocated volume must be > 0\");\r\n\r\n        allocations[id] = Allocation({\r\n            ID: id,\r\n            farmerID: farmerID,\r\n            allocatedVolume: allocatedVolume,\r\n            usedVolume: 0,\r\n            timestamp: timestamp,\r\n            issuingAuthority: msg.sender,\r\n            exists: true\r\n        });\r\n\r\n        emit AllocationStored(\r\n            id,\r\n            farmerID,\r\n            allocatedVolume,\r\n            0,\r\n            timestamp,\r\n            msg.sender\r\n        );\r\n    }\r\n\r\n    // Additional allocation approval for an existing base allocation\r\n    function addAdditionalAllocation(\r\n        string calldata baseId,\r\n        uint256 additionalVolume,\r\n        uint256 timestamp\r\n    ) external onlyAuthority {\r\n        Allocation storage a = allocations[baseId];\r\n        require(a.exists, \"Base allocation does not exist\");\r\n        require(additionalVolume > 0, \"Additional volume must be > 0\");\r\n\r\n        additionalVolumes[baseId] += additionalVolume;\r\n\r\n        emit AdditionalAllocationStored(\r\n            baseId,\r\n            additionalVolume,\r\n            a.allocatedVolume + additionalVolumes[baseId],\r\n            timestamp,\r\n            msg.sender\r\n        );\r\n    }\r\n\r\n    // Query base allocation + total additional approved\r\n    function queryAllocation(string calldata id)\r\n        external\r\n        view\r\n        returns (\r\n            string memory,\r\n            string memory,\r\n            uint256,\r\n            uint256,\r\n            uint256,\r\n            uint256,\r\n            address\r\n        )\r\n    {\r\n        Allocation memory a = allocations[id];\r\n        require(a.exists, \"Allocation does not exist\");\r\n\r\n        return (\r\n            a.ID,\r\n            a.farmerID,\r\n            a.allocatedVolume,\r\n            a.usedVolume,\r\n            a.timestamp,\r\n            additionalVolumes[id],\r\n            a.issuingAuthority\r\n        );\r\n    }\r\n\r\n    // Convenience helper (optional): get total approved volume\r\n    function getTotalAllocatedVolume(string calldata id)\r\n        external\r\n        view\r\n        returns (uint256)\r\n    {\r\n        Allocation memory a = allocations[id];\r\n        require(a.exists, \"Allocation does not exist\");\r\n        return a.allocatedVolume + additionalVolumes[id];\r\n    }\r\n}\r\n"
+      }
+    }
+  }
+}

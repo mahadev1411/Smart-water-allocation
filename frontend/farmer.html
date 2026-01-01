@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Farmer Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      background:#050814; color:#e5e7eb; padding:20px;
+      max-width: 900px; margin: 0 auto;
+    }
+    .card {
+      background:#0f172a; padding:16px; border-radius:12px;
+      margin-bottom:16px; border:1px solid #1f2937;
+    }
+    input, button, select {
+      padding:8px; border-radius:8px; border:none; margin:6px 0; width:100%;
+      font-size: 14px;
+    }
+    input, select {
+      background: #0b1224; color: white; border: 1px solid #1f2937;
+    }
+    button {
+      background:#22c55e; color:#001a08; font-weight:600; cursor:pointer;
+    }
+    table { width:100%; border-collapse: collapse; font-size:14px; margin-top: 8px; }
+    th, td { padding:8px; border-bottom:1px solid #1f2937; text-align:left; }
+    .muted { color:#9ca3af; font-size:13px; }
+
+    .tabs {
+      display:flex; gap:8px; margin-bottom:12px;
+    }
+    .tab-btn {
+      flex:1; padding:10px; border-radius:8px;
+      background:#0b1224; color:#9ca3af; border:1px solid #1f2937;
+      cursor:pointer; font-weight:600;
+    }
+    .tab-btn.active {
+      background:#111d3a; color:#e5e7eb; border-color:#22c55e;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>🌾 Farmer Dashboard</h2>
+
+  <!-- LOGIN + REGISTER CARD -->
+  <div class="card" id="authCard">
+    <div class="tabs">
+      <button class="tab-btn active" id="loginTab" onclick="showLogin()">Login</button>
+      <button class="tab-btn" id="registerTab" onclick="showRegister()">Register</button>
+    </div>
+
+    <!-- LOGIN FORM -->
+    <div id="loginForm">
+      <h3>Login</h3>
+      <input id="loginFarmerId" placeholder="Farmer ID (eg FARMER09)" />
+      <input id="loginPassword" type="password" placeholder="Password" />
+      <button onclick="login()">Login</button>
+      <p class="muted" id="loginMsg"></p>
+    </div>
+
+    <!-- REGISTER FORM -->
+    <div id="registerForm" style="display:none;">
+      <h3>Register</h3>
+      <input id="regFarmerId" placeholder="Farmer ID (eg FARMER09)" />
+      <input id="regName" placeholder="Full Name" />
+      <input id="regPhone" placeholder="Phone" />
+      <input id="regEmail" placeholder="Email" />
+      <input id="regZone" placeholder="Zone (eg ZONE1)" />
+      <input id="regPassword" type="password" placeholder="Password" />
+      <button onclick="registerFarmer()">Register</button>
+      <p class="muted" id="regMsg"></p>
+    </div>
+  </div>
+
+  <!-- PROFILE -->
+  <div class="card" id="profileCard" style="display:none;">
+    <h3>My Profile</h3>
+    <p><b>ID:</b> <span id="p-id"></span></p>
+    <p><b>Name:</b> <span id="p-name"></span></p>
+    <p><b>Phone:</b> <span id="p-phone"></span></p>
+    <p><b>Email:</b> <span id="p-email"></span></p>
+    <p><b>Zone:</b> <span id="p-zone"></span></p>
+  </div>
+
+  <!-- ALLOCATIONS -->
+  <div class="card" id="allocCard" style="display:none;">
+    <h3>My Approved Allocations</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th><th>Zone</th><th>Fertility</th><th>Volume</th>
+          <th>Decision Time</th><th>TxHash</th>
+        </tr>
+      </thead>
+      <tbody id="allocBody"></tbody>
+    </table>
+    <p class="muted" id="allocMsg"></p>
+  </div>
+
+<script>
+  const API_BASE = "http://localhost:3000";
+  let token = null;
+
+  // -----------------------------
+  // Tabs
+  // -----------------------------
+  function showLogin(){
+    document.getElementById("loginForm").style.display="block";
+    document.getElementById("registerForm").style.display="none";
+    document.getElementById("loginTab").classList.add("active");
+    document.getElementById("registerTab").classList.remove("active");
+  }
+
+  function showRegister(){
+    document.getElementById("loginForm").style.display="none";
+    document.getElementById("registerForm").style.display="block";
+    document.getElementById("registerTab").classList.add("active");
+    document.getElementById("loginTab").classList.remove("active");
+  }
+
+  // -----------------------------
+  // Register
+  // -----------------------------
+  async function registerFarmer(){
+    const farmerId = document.getElementById("regFarmerId").value.trim();
+    const name = document.getElementById("regName").value.trim();
+    const phone = document.getElementById("regPhone").value.trim();
+    const email = document.getElementById("regEmail").value.trim();
+    const zone = document.getElementById("regZone").value.trim();
+    const password = document.getElementById("regPassword").value.trim();
+
+    const res = await fetch(`${API_BASE}/api/farmer/register`, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ farmerId, name, phone, email, password, zone })
+    });
+
+    const data = await res.json();
+    if(!res.ok){
+      document.getElementById("regMsg").textContent = data.error || "Register failed";
+      return;
+    }
+
+    document.getElementById("regMsg").textContent =
+      "✅ Registered successfully. Please login now.";
+
+    // Auto switch to login tab after register
+    showLogin();
+  }
+
+  // -----------------------------
+  // Login
+  // -----------------------------
+  async function login(){
+    const farmerId = document.getElementById("loginFarmerId").value.trim();
+    const password = document.getElementById("loginPassword").value.trim();
+
+    const res = await fetch(`${API_BASE}/api/farmer/login`, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ farmerId, password })
+    });
+
+    const data = await res.json();
+    if(!res.ok){
+      document.getElementById("loginMsg").textContent = data.error || "Login failed";
+      return;
+    }
+
+    token = data.token;
+    document.getElementById("loginMsg").textContent = "✅ Logged in";
+
+    document.getElementById("authCard").style.display="none";
+    document.getElementById("profileCard").style.display="block";
+    document.getElementById("allocCard").style.display="block";
+
+    loadProfile();
+    loadAllocations();
+  }
+
+  async function loadProfile(){
+    const res = await fetch(`${API_BASE}/api/farmer/me`,{
+      headers:{ "Authorization":`Bearer ${token}` }
+    });
+    const p = await res.json();
+
+    document.getElementById("p-id").textContent = p.farmer_id;
+    document.getElementById("p-name").textContent = p.name;
+    document.getElementById("p-phone").textContent = p.phone;
+    document.getElementById("p-email").textContent = p.email;
+    document.getElementById("p-zone").textContent = p.zone;
+  }
+
+  async function loadAllocations(){
+    const res = await fetch(`${API_BASE}/api/farmer/allocations`,{
+      headers:{ "Authorization":`Bearer ${token}` }
+    });
+    const list = await res.json();
+
+    const tbody = document.getElementById("allocBody");
+    tbody.innerHTML = "";
+
+    if(list.length === 0){
+      document.getElementById("allocMsg").textContent = "No approved allocations yet.";
+      return;
+    }
+
+    document.getElementById("allocMsg").textContent = "";
+
+    list.forEach(a=>{
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${a.allocationId}</td>
+        <td>${a.zone}</td>
+        <td>${a.fertility_score?.toFixed?.(2) ?? "—"}</td>
+        <td>${a.allocatedVolume}</td>
+        <td>${new Date(a.decisionTimestamp).toLocaleString()}</td>
+        <td class="muted">${a.txHash ?? "—"}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+</script>
+</body>
+</html>

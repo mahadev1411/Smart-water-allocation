@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Smart Irrigation Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    :root {
+      --bg: #050814;
+      --bg-alt: #0a1020;
+      --card-bg: #0f172a;
+      --accent: #22c55e;
+      --accent-soft: rgba(34, 197, 94, 0.2);
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --danger: #ef4444;
+      --warning: #facc15;
+      --border: #1f2937;
+      --radius-lg: 18px;
+      --radius-sm: 10px;
+      --shadow-soft: 0 18px 45px rgba(15, 23, 42, 0.9);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        sans-serif;
+    }
+
+    body {
+      background: radial-gradient(circle at top, #111827 0, #020617 44%, #000 100%);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .app-shell {
+      max-width: 1320px;
+      margin: 0 auto;
+    }
+
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      padding: 14px 20px;
+      border-radius: var(--radius-lg);
+      background: linear-gradient(135deg, #111827, #020617);
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .top-bar-title {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .pill {
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      color: var(--muted);
+    }
+
+    .app-name {
+      font-size: 20px;
+      font-weight: 600;
+    }
+
+    .badge-live {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(34, 197, 94, 0.16);
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 11px;
+      color: #bbf7d0;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #22c55e;
+      box-shadow: 0 0 10px rgba(34, 197, 94, 0.9);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 2fr 3fr;
+      grid-auto-rows: minmax(120px, auto);
+      gap: 18px;
+    }
+
+    @media (max-width: 992px) {
+      .grid { grid-template-columns: 1fr; }
+      body { padding: 12px; }
+    }
+
+    .card {
+      background: radial-gradient(circle at top left, #1e293b 0, #020617 60%);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
+      padding: 14px 16px 16px;
+      box-shadow: 0 14px 40px rgba(15, 23, 42, 0.8);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(
+        circle at top right,
+        rgba(34, 197, 94, 0.08),
+        transparent 55%
+      );
+      opacity: 0.9;
+      pointer-events: none;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #9ca3af;
+    }
+
+    .card-subtitle {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .tiny-pill {
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.55);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+      color: #e5e7eb;
+      background: rgba(15, 23, 42, 0.7);
+    }
+
+    .card-body {
+      position: relative;
+      z-index: 1;
+      font-size: 13px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 4px;
+      font-size: 12px;
+    }
+
+    th, td {
+      padding: 6px 6px;
+      text-align: left;
+      border-bottom: 1px solid rgba(30, 64, 175, 0.4);
+      white-space: nowrap;
+    }
+
+    th {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #9ca3af;
+    }
+
+    .status-pill {
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .status-pending {
+      background: rgba(250, 204, 21, 0.15);
+      color: #facc15;
+      border: 1px solid rgba(250, 204, 21, 0.3);
+    }
+
+    .status-approved {
+      background: rgba(34, 197, 94, 0.15);
+      color: #4ade80;
+      border: 1px solid rgba(34, 197, 94, 0.35);
+    }
+
+    .btn {
+      border-radius: 999px;
+      padding: 4px 10px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      background: transparent;
+      transition: transform 0.12s ease, box-shadow 0.12s ease,
+        background 0.12s ease, border 0.12s ease;
+    }
+
+    .btn-approve {
+      background: var(--accent-soft);
+      border-color: rgba(34, 197, 94, 0.6);
+      color: #bbf7d0;
+    }
+
+    .btn-reject {
+      background: rgba(239, 68, 68, 0.08);
+      border-color: rgba(248, 113, 113, 0.6);
+      color: #fecaca;
+    }
+
+    .metric-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 4px;
+    }
+
+    @media (max-width: 768px) {
+      .metric-row {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    .metric {
+      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid rgba(30, 64, 175, 0.6);
+    }
+
+    .metric-label {
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 2px;
+    }
+
+    .metric-value {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .metric-chip {
+      font-size: 11px;
+      color: #bae6fd;
+    }
+
+    .muted { color: var(--muted); font-size: 11px; }
+    .mono {
+      font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .hash { font-size: 11px; color: #a5b4fc; }
+
+    .scroll-y {
+      max-height: 220px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+    }
+
+    .hint { font-size: 11px; color: var(--muted); margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="top-bar">
+      <div class="top-bar-title">
+        <div>
+          <div class="pill">Admin Console</div>
+          <div class="app-name">Smart Water Allocation Dashboard</div>
+        </div>
+      </div>
+      <div class="badge-live">
+        <span class="dot"></span>
+        <span>IoT feed live</span>
+      </div>
+    </header>
+
+    <main class="grid">
+      <!-- 1. Live Sensor Data -->
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Live Sensor Data</div>
+            <div class="card-subtitle">IoT feed: last few packets</div>
+          </div>
+          <span class="tiny-pill">location · farmer · env</span>
+        </div>
+        <div class="card-body scroll-y">
+          <table id="sensor-table">
+            <thead>
+              <tr>
+                <th>Zone</th>
+                <th>Farmer</th>
+                <th>Temp (°C)</th>
+                <th>Humidity (%)</th>
+                <th>pH</th>
+                <th>Rainfall</th>
+                <th>Flow rate</th>
+                <th>Received at</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 2. ML Decision Output -->
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">ML Decision Output</div>
+            <div class="card-subtitle">Today’s recommended allocation</div>
+          </div>
+          <span class="tiny-pill">model · fertility · volume</span>
+        </div>
+
+        <div class="card-body" id="ml-decision-card">
+          <div class="metric-row">
+            <div class="metric">
+              <div class="metric-label">Zone</div>
+              <div class="metric-value" id="ml-zone">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Fertility score</div>
+              <div class="metric-value" id="ml-fertility">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Allocated volume</div>
+              <div class="metric-value" id="ml-volume">—</div>
+              <div class="metric-chip">mapped from score</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Period</div>
+              <div class="metric-value" id="ml-period">—</div>
+              <div class="metric-chip" id="ml-time">—</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. Pending Allocations -->
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Pending Allocations</div>
+            <div class="card-subtitle">Admin queue</div>
+          </div>
+          <span class="tiny-pill">status: pending</span>
+        </div>
+        <div class="card-body scroll-y">
+          <table id="pending-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Farmer</th>
+                <th>Zone</th>
+                <th>Fertility</th>
+                <th>Volume (m³)</th>
+                <th>Period</th>
+                <th>Decision time</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 4. Approved Allocations -->
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Approved Allocations</div>
+            <div class="card-subtitle">On chain or scheduled</div>
+          </div>
+          <span class="tiny-pill">status: approved</span>
+        </div>
+        <div class="card-body scroll-y">
+          <table id="approved-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Farmer</th>
+                <th>Zone</th>
+                <th>Fertility</th>
+                <th>Volume (m³)</th>
+                <th>Period</th>
+                <th>Decision time</th>
+                <th>Approved by</th>
+                <th>Approved at</th>
+                <th>Tx hash</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 5. Blockchain proof panel -->
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Blockchain Proof Panel</div>
+            <div class="card-subtitle">Integrity snapshot</div>
+          </div>
+          <span class="tiny-pill">optional · debug</span>
+        </div>
+        <div class="card-body">
+          <div class="metric-row">
+            <div class="metric">
+              <div class="metric-label">Contract address</div>
+              <div class="hash mono" id="bc-contract">—</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Current block</div>
+              <div class="metric-value mono" id="bc-block">—</div>
+            </div>
+            <div class="metric" style="grid-column: span 2">
+              <div class="metric-label">Recent tx hashes</div>
+              <div class="mono" id="bc-tx-list">—</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script>
+    const API_BASE = "http://localhost:3000";
+
+    // -------------------------
+    // Render helpers
+    // -------------------------
+    function renderSensors(data) {
+      const tbody = document.querySelector("#sensor-table tbody");
+      tbody.innerHTML = "";
+      data.forEach((row) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${row.zone}</td>
+          <td>${row.farmerId}</td>
+          <td>${Number(row.temperature).toFixed(1)}</td>
+          <td>${row.humidity}</td>
+          <td>${row.ph}</td>
+          <td>${row.rainfall}</td>
+          <td>${row.flowRate ?? "<span class='muted'>n/a</span>"}</td>
+          <td>${row.receivedAt}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderPending(data) {
+      const tbody = document.querySelector("#pending-table tbody");
+      tbody.innerHTML = "";
+      data.forEach((row) => {
+        const fertilityText = row.fertility_score == null
+          ? "—"
+          : Number(row.fertility_score).toFixed(2);
+
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${row.allocationId}</td>
+          <td>${row.farmerId}</td>
+          <td>${row.zone}</td>
+          <td>${fertilityText}</td>
+          <td>${row.allocatedVolume}</td>
+          <td>${row.period}</td>
+          <td>${new Date(row.decisionTimestamp).toLocaleString()}</td>
+          <td><span class="status-pill status-pending">${row.status}</span></td>
+          <td>
+            <button class="btn btn-approve" data-id="${row.allocationId}" data-action="approve">Approve</button>
+            <button class="btn btn-reject" data-id="${row.allocationId}" data-action="reject">Reject</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderApproved(data) {
+      const tbody = document.querySelector("#approved-table tbody");
+      tbody.innerHTML = "";
+      data.forEach((row) => {
+        const fertilityText = row.fertility_score == null
+          ? "—"
+          : Number(row.fertility_score).toFixed(2);
+
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${row.allocationId}</td>
+          <td>${row.farmerId}</td>
+          <td>${row.zone}</td>
+          <td>${fertilityText}</td>
+          <td>${row.allocatedVolume}</td>
+          <td>${row.period}</td>
+          <td>${new Date(row.decisionTimestamp).toLocaleString()}</td>
+          <td>${row.approvedBy ?? "—"}</td>
+          <td>${row.approvedAt ? new Date(row.approvedAt).toLocaleString() : "—"}</td>
+          <td class="hash">${row.txHash ?? "—"}</td>
+          <td><span class="status-pill status-approved">${row.status ?? "APPROVED"}</span></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // -------------------------
+    // Loaders
+    // -------------------------
+    async function loadSensorsFromBackend() {
+      try {
+        const res = await fetch(`${API_BASE}/api/sensors/live`);
+        const data = await res.json();
+        const formatted = data.map(x => ({
+          ...x,
+          receivedAt: new Date(x.receivedAt).toLocaleTimeString()
+        }));
+        renderSensors(formatted);
+      } catch (err) {
+        console.error("Sensors fetch failed:", err);
+      }
+    }
+
+    async function loadMLDecisionFromBackend() {
+      try {
+        const res = await fetch(`${API_BASE}/api/ml/decision`);
+        const d = await res.json();
+        if (!d.zone) return;
+
+        document.getElementById("ml-zone").textContent = d.zone;
+        document.getElementById("ml-fertility").textContent =
+          Number(d.fertility_score).toFixed(2);
+        document.getElementById("ml-volume").textContent =
+          d.allocatedVolume + " m³";
+        document.getElementById("ml-period").textContent = d.period;
+        document.getElementById("ml-time").textContent =
+          "Decision at " + new Date(d.decisionTimestamp).toLocaleTimeString();
+      } catch (err) {
+        console.error("ML fetch failed:", err);
+      }
+    }
+
+    async function loadPendingFromBackend() {
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/pendingAllocations`);
+        const data = await res.json();
+        renderPending(data);
+      } catch (err) {
+        console.error("Pending fetch failed:", err);
+      }
+    }
+
+    async function loadApprovedFromBackend() {
+      try {
+        const res = await fetch(`${API_BASE}/api/allocations`);
+        const data = await res.json();
+        renderApproved(data);
+      } catch (err) {
+        console.error("Approved fetch failed:", err);
+      }
+    }
+
+    async function loadProofFromBackend() {
+      try {
+        const res = await fetch(`${API_BASE}/api/proof`);
+        const d = await res.json();
+
+        document.getElementById("bc-contract").textContent = d.contractAddress;
+        document.getElementById("bc-block").textContent = d.currentBlockNumber;
+        document.getElementById("bc-tx-list").innerHTML =
+          (d.recentTxHashes || []).length === 0
+            ? "—"
+            : d.recentTxHashes.map(h => `• ${h}`).join("<br/>");
+      } catch (err) {
+        console.error("Proof fetch failed:", err);
+      }
+    }
+
+    // -------------------------
+    // Wire approve/reject buttons
+    // -------------------------
+    function wirePendingActions() {
+      document
+        .querySelector("#pending-table")
+        .addEventListener("click", async (event) => {
+          const btn = event.target.closest("button");
+          if (!btn) return;
+
+          const allocationId = btn.dataset.id;
+          const action = btn.dataset.action;
+
+          try {
+            if (action === "approve") {
+              await fetch(`${API_BASE}/api/admin/approveAllocation/${allocationId}`, {
+                method: "POST",
+              });
+            } else {
+              await fetch(`${API_BASE}/api/admin/rejectAllocation/${allocationId}`, {
+                method: "POST",
+              });
+            }
+
+            await loadPendingFromBackend();
+            await loadApprovedFromBackend();
+            await loadProofFromBackend();
+
+          } catch (err) {
+            console.error(`${action} failed:`, err);
+            alert("Action failed. Check backend console.");
+          }
+        });
+    }
+
+    function init() {
+      loadSensorsFromBackend();
+      loadMLDecisionFromBackend();
+      loadPendingFromBackend();
+      loadApprovedFromBackend();
+      loadProofFromBackend();
+
+      wirePendingActions();
+
+      // auto refresh everything every 2 sec
+      setInterval(() => {
+        loadSensorsFromBackend();
+        loadMLDecisionFromBackend();
+        loadPendingFromBackend();
+        loadApprovedFromBackend();
+        loadProofFromBackend();
+      }, 2000);
+    }
+
+    init();
+  </script>
+</body>
+</html>
