@@ -1,52 +1,21 @@
-# --------------------
-# Node.js
-# --------------------
-node_modules/
-npm-debug.log*
-yarn.lock
-
-# --------------------
 # Python
-# --------------------
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.env
-.venv
+
+# Virtual environments
 venv/
-venv_*/
-env/
-ENV/
+venv*/
+.env
+.env*
 
-# --------------------
-# ML / Joblib / Cache
-# --------------------
+# ML artifacts
 *.joblib
-*.pkl
-*.h5
-.cache/
-ml_service/venv/
-ml_service/venv_*/
 
-# --------------------
-# OS / Editor
-# --------------------
+# Node
+node_modules/
+
+# OS
 .DS_Store
 Thumbs.db
-.vscode/
-.idea/
-
-# --------------------
-# Logs
-# --------------------
-logs/
-*.log
-
-# --------------------
-# Fabric / Generated Artifacts
-# --------------------
-fabric-samples/
-channel-artifacts/
-crypto-config/
-*.block
