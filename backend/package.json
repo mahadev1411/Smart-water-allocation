@@ -4,6 +4,8 @@
   "type": "commonjs",
   "main": "server.js",
   "dependencies": {
+    "@grpc/grpc-js": "^1.14.3",
+    "@hyperledger/fabric-gateway": "^1.10.0",
     "axios": "^1.13.2",
     "bcrypt": "^6.0.0",
     "cassandra-driver": "^4.8.0",

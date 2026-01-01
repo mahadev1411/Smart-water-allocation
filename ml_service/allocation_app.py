@@ -1,10 +1,9 @@
-# allocation_app.py (FIXED)
 from flask import Flask, request, jsonify
 import joblib, pandas as pd, os
 
 app = Flask(__name__)
 
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "final_water_model.joblib")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "water_model.joblib")
 model = joblib.load(MODEL_PATH)
 
 # MUST match training columns

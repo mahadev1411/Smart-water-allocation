@@ -39,11 +39,35 @@
     .tab-btn.active {
       background:#111d3a; color:#e5e7eb; border-color:#22c55e;
     }
+    .table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.alloc-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.alloc-table th,
+.alloc-table td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hash-cell {
+  max-width: 220px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  color: #a5b4fc;
+}
+
   </style>
 </head>
 <body>
 
-  <h2>🌾 Farmer Dashboard</h2>
+  <h2>Farmer Dashboard</h2>
 
   <div class="card" id="authCard">
     <div class="tabs">
@@ -62,7 +86,6 @@
     <div id="registerForm" style="display:none;">
       <h3>Register</h3>
 
-      <input id="regFarmerId" placeholder="Farmer ID (eg FARMER09)" />
       <input id="regName" placeholder="Full Name" />
       <input id="regPhone" placeholder="Phone" />
       <input id="regEmail" placeholder="Email" />
@@ -104,17 +127,28 @@
       <p class="muted" id="addMsg"></p>
     </div>
 
-    <table>
-      <thead>
-        <tr>
-          <th>ID</th><th>Zone</th><th>Fertility</th>
-          <th>Base Volume</th><th>Additional Approved</th><th>Total Volume</th>
-          <th>Decision Time</th><th>TxHash</th>
-        </tr>
-      </thead>
-      <tbody id="allocBody"></tbody>
-    </table>
-    <p class="muted" id="allocMsg"></p>
+    <div class="table-wrap">
+  <table class="alloc-table">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Zone</th>
+        <th>Fertility</th>
+        <th>Base Volume</th>
+        <th>Additional Approved</th>
+        <th>Total Volume</th>
+        <th>Decision Time</th>
+        <th>Base TxHash</th>
+        <th>Last Additional TxHash</th>
+      </tr>
+    </thead>
+
+    <tbody id="allocBody"></tbody>
+  </table>
+</div>
+
+<p class="muted" id="allocMsg"></p>
+
   </div>
 
 <script>
@@ -135,56 +169,70 @@
     document.getElementById("loginTab").classList.remove("active");
   }
 
-  async function registerFarmer(){
-    const farmerId = document.getElementById("regFarmerId").value.trim();
-    const name = document.getElementById("regName").value.trim();
-    const phone = document.getElementById("regPhone").value.trim();
-    const email = document.getElementById("regEmail").value.trim();
-    const zone = document.getElementById("regZone").value.trim();
-    const password = document.getElementById("regPassword").value.trim();
+ async function registerFarmer(){
+  const name = document.getElementById("regName").value.trim();
+  const phone = document.getElementById("regPhone").value.trim();
+  const email = document.getElementById("regEmail").value.trim();
+  const zone = document.getElementById("regZone").value.trim();
+  const password = document.getElementById("regPassword").value.trim();
 
-    const land_size = parseFloat(document.getElementById("regLandSize").value);
-    const crop_type = document.getElementById("regCropType").value.trim();
-    const ph = parseFloat(document.getElementById("regPH").value);
-    const soil_type = document.getElementById("regSoilType").value.trim();
+  const land_size = parseFloat(document.getElementById("regLandSize").value);
+  const crop_type = document.getElementById("regCropType").value.trim();
+  const ph = parseFloat(document.getElementById("regPH").value);
+  const soil_type = document.getElementById("regSoilType").value.trim();
 
-    if(!farmerId || !phone || !password){
-      document.getElementById("regMsg").textContent =
-        "farmerId, phone, password are mandatory.";
-      return;
-    }
-    if(isNaN(land_size) || land_size <= 0){
-      document.getElementById("regMsg").textContent =
-        "Enter valid land size.";
-      return;
-    }
-    if(!crop_type || !soil_type || isNaN(ph)){
-      document.getElementById("regMsg").textContent =
-        "crop type, soil type, and pH are required.";
-      return;
-    }
-
-    const res = await fetch(`${API_BASE}/api/farmer/register`, {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({
-        farmerId, name, phone, email, password, zone,
-        land_size, crop_type, ph, soil_type
-      })
-    });
-
-    const data = await res.json();
-    if(!res.ok){
-      document.getElementById("regMsg").textContent =
-        data.error || "Register failed";
-      return;
-    }
-
+  if(!phone || !password || !zone){
     document.getElementById("regMsg").textContent =
-      "✅ Registered successfully. Please login now.";
-
-    showLogin();
+      "Phone, password and zone are mandatory.";
+    return;
   }
+
+  if(isNaN(land_size) || land_size <= 0){
+    document.getElementById("regMsg").textContent =
+      "Enter valid land size.";
+    return;
+  }
+
+  if(!crop_type || !soil_type || isNaN(ph)){
+    document.getElementById("regMsg").textContent =
+      "Crop type, soil type, and pH are required.";
+    return;
+  }
+
+  const res = await fetch(`${API_BASE}/api/farmer/register`, {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({
+      name,
+      phone,
+      email,
+      password,
+      zone,
+      land_size,
+      crop_type,
+      ph,
+      soil_type
+    })
+  });
+
+  const data = await res.json();
+
+  if(!res.ok){
+    document.getElementById("regMsg").textContent =
+      data.error || "Register failed";
+    return;
+  }
+
+  // ✅ SUCCESS FLOW
+  document.getElementById("regMsg").textContent =
+    `✅ Registered successfully. Your Farmer ID is ${data.farmerId}`;
+
+  // Auto-fill login form
+  document.getElementById("loginFarmerId").value = data.farmerId;
+
+  // Switch to login tab
+  showLogin();
+}
 
   async function login(){
     const farmerId = document.getElementById("loginFarmerId").value.trim();
@@ -264,6 +312,7 @@
         <td>${totalVol}</td>
         <td>${new Date(a.decisionTimestamp).toLocaleString()}</td>
         <td class="muted">${a.txHash ?? "—"}</td>
+        <td class="muted">${a.lastAdditionalTxHash ?? "—"}</td>
       `;
       tbody.appendChild(tr);
     });

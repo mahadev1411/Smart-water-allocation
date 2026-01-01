@@ -16,6 +16,19 @@ venv*/
 # Node
 node_modules/
 
+<<<<<<< HEAD
 # OS
 .DS_Store
 Thumbs.db
+=======
+# solidity-coverage files
+/coverage
+/coverage.json
+
+# Hardhat Ignition default folder for deployments against a local node
+ignition/deployments/chain-31337
+
+/venv_old
+
+
+>>>>>>> 7ebba351 (adding project to github)
